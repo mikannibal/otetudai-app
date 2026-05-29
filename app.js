@@ -1402,7 +1402,44 @@ function renderSettings() {
         </div>
         <button class="button primary" type="submit"><span class="icon">✓</span>設定を保存</button>
       </form>
+      ${renderGachaResetControls()}
     </section>
+  `;
+}
+
+function renderGachaResetControls() {
+  const today = todayKey();
+  const todayEntries = state.gachaHistory.filter((entry) => entry.date === today);
+  return `
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <h3>今日のガチャ</h3>
+          <span class="subtle">${todayEntries.length}件実施済み</span>
+        </div>
+        <button class="button danger" data-action="reset-today-gacha" data-child-id="all" ${todayEntries.length ? "" : "disabled"}>
+          <span class="icon">↺</span>全員分リセット
+        </button>
+      </div>
+      <div class="table-like">
+        ${state.children.map((child) => renderChildGachaResetRow(child, today)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderChildGachaResetRow(child, today) {
+  const entry = state.gachaHistory.find((item) => item.childId === child.id && item.date === today);
+  return `
+    <div class="wide-row">
+      <div class="meta">
+        <strong>${escapeHtml(child.name)}</strong>
+        <span>${entry ? escapeHtml(entry.label) : "未実施"}</span>
+      </div>
+      <button class="button danger" data-action="reset-today-gacha" data-child-id="${child.id}" ${entry ? "" : "disabled"}>
+        <span class="icon">↺</span>リセット
+      </button>
+    </div>
   `;
 }
 
@@ -1641,6 +1678,7 @@ document.addEventListener("click", async (event) => {
     if (action === "reject-reward") await rejectReward(button.dataset.requestId);
     if (action === "mark-allowance-paid") await markAllowancePaid();
     if (action === "delete-reward") await deleteReward(button.dataset.rewardId);
+    if (action === "reset-today-gacha") await resetTodayGacha(button.dataset.childId);
   } catch (error) {
     handleAppError(error);
   }
@@ -1875,6 +1913,35 @@ async function markAllowancePaid() {
   }
   saveState();
   showToast(count ? "未払いおこづかいをもらった履歴にしました" : "未払いはありません");
+}
+
+async function resetTodayGacha(childId) {
+  const resetAll = childId === "all" || !childId;
+  const today = todayKey();
+  const beforeCount = state.gachaHistory.length;
+  if (remote.enabled) {
+    let query = remote.client.from("gacha_history").delete().eq("date", today);
+    if (!resetAll) {
+      query = query.eq("child_id", childId);
+    }
+    await expectOk(query);
+    await refreshRemoteState({ quiet: true });
+  } else {
+    state.gachaHistory = state.gachaHistory.filter((entry) => {
+      if (entry.date !== today) return true;
+      return resetAll ? false : entry.childId !== childId;
+    });
+    saveState();
+    render();
+  }
+  const afterCount = state.gachaHistory.length;
+  const removedCount = Math.max(0, beforeCount - afterCount);
+  const child = resetAll ? null : childById(childId);
+  showToast(
+    removedCount
+      ? `${resetAll ? "全員" : child?.name || "選択した子"}の今日のガチャをリセットしました`
+      : "リセット対象はありません",
+  );
 }
 
 function openGacha() {
